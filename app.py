@@ -1,11 +1,12 @@
-import tkinter as tk
+﻿import tkinter as tk
 from tkinter import ttk, simpledialog, messagebox, filedialog
-from repo.movement_repository import get_stock, create_movement, list_movements
-from utils.csv_export import export_movements_csv
+
 from ui_strings import *
 from repo.database import init_schema
 from repo.article_repository import create_article, list_articles
-from repo.movement_repository import get_stock, create_movement
+from repo.movement_repository import get_stock, create_movement, list_movements
+from utils.csv_export import export_movements_csv
+from utils.backup_db import backup_db
 
 
 class App(tk.Tk):
@@ -38,6 +39,10 @@ class App(tk.Tk):
         m_moves.add_separator()
         m_moves.add_command(label="Historique…", command=self.show_history)
         m_moves.add_command(label="Exporter CSV…", command=self.export_csv)
+
+        m_tools = tk.Menu(menubar, tearoff=0)
+        m_tools.add_command(label="Sauvegarder la base", command=self.backup_db_action)
+        menubar.add_cascade(label="Outils", menu=m_tools)
 
         menubar.add_cascade(label="Mouvements", menu=m_moves)
 
@@ -120,7 +125,7 @@ class App(tk.Tk):
             messagebox.showerror(MSG_ERROR, str(e))
 
     def show_history(self):
-        # Filtre sur l'article sélectionné si dispo, sinon tout
+        # Filtre sur l'article sÃ©lectionnÃ© si dispo, sinon tout
         sel_id = self._selected_article_id()
 
         win = tk.Toplevel(self)
@@ -183,7 +188,15 @@ class App(tk.Tk):
         except Exception as e:
             messagebox.showerror(MSG_ERROR, str(e))
 
+    def backup_db_action(self):
+        try:
+            path = backup_db()
+            messagebox.showinfo(MSG_INFO, f"Sauvegarde créée :\n{path}")
+        except Exception as e:
+            messagebox.showerror(MSG_ERROR, str(e))
+
 
 if __name__ == "__main__":
     init_schema()
     App().mainloop()
+
