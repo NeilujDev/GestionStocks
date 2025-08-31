@@ -1,0 +1,14 @@
+# Environnements et artefacts
+.venv/
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+
+# Données locales
+stock.db
+exports/
+
+# Secrets éventuels
+.env
