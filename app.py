@@ -1,5 +1,7 @@
 import tkinter as tk
-from tkinter import ttk, simpledialog, messagebox
+from tkinter import ttk, simpledialog, messagebox, filedialog
+from repo.movement_repository import get_stock, create_movement, list_movements
+from utils.csv_export import export_movements_csv
 from ui_strings import *
 from repo.database import init_schema
 from repo.article_repository import create_article, list_articles
@@ -32,6 +34,11 @@ class App(tk.Tk):
         m_moves.add_command(
             label="Sortie (OUT)", command=lambda: self.add_movement("OUT")
         )
+
+        m_moves.add_separator()
+        m_moves.add_command(label="Historique…", command=self.show_history)
+        m_moves.add_command(label="Exporter CSV…", command=self.export_csv)
+
         menubar.add_cascade(label="Mouvements", menu=m_moves)
 
         self.config(menu=menubar)
@@ -109,6 +116,70 @@ class App(tk.Tk):
             create_movement(article_id, kind, qty)
             self.status.set(f"Mouvement {kind} de {qty} enregistré.")
             self.refresh_articles()
+        except Exception as e:
+            messagebox.showerror(MSG_ERROR, str(e))
+
+    def show_history(self):
+        # Filtre sur l'article sélectionné si dispo, sinon tout
+        sel_id = self._selected_article_id()
+
+        win = tk.Toplevel(self)
+        win.title(
+            "Historique des mouvements" + (f" (article {sel_id})" if sel_id else "")
+        )
+        win.geometry("720x420")
+
+        frame = ttk.Frame(win)
+        frame.pack(fill="both", expand=True, padx=12, pady=12)
+
+        cols = ("id", "article_id", "kind", "quantity", "created_at")
+        tree = ttk.Treeview(frame, columns=cols, show="headings")
+        for c, txt, w, anchor in [
+            ("id", "ID", 60, "center"),
+            ("article_id", "Article", 80, "center"),
+            ("kind", "Type", 80, "center"),
+            ("quantity", "Qté", 80, "e"),
+            ("created_at", "Date", 260, "w"),
+        ]:
+            tree.heading(c, text=txt)
+            tree.column(c, width=w, anchor=anchor)
+
+        vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        def load():
+            tree.delete(*tree.get_children())
+            rows = list_movements(article_id=sel_id, limit=1000)
+            for r in rows:
+                tree.insert("", "end", values=r)
+
+        btns = ttk.Frame(win)
+        btns.pack(fill="x", padx=12, pady=(0, 12))
+        ttk.Button(btns, text="Rafraîchir", command=load).pack(side="left")
+        ttk.Button(btns, text="Fermer", command=win.destroy).pack(side="right")
+
+        load()
+
+    def export_csv(self):
+        sel_id = self._selected_article_id()
+        default_name = (
+            "mouvements.csv" if not sel_id else f"mouvements_article_{sel_id}.csv"
+        )
+        path = filedialog.asksaveasfilename(
+            title="Exporter les mouvements en CSV",
+            defaultextension=".csv",
+            initialfile=default_name,
+            filetypes=[("CSV", "*.csv"), ("Tous les fichiers", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            n = export_movements_csv(path, article_id=sel_id)
+            messagebox.showinfo(MSG_INFO, f"Export OK: {n} ligne(s)\n{path}")
         except Exception as e:
             messagebox.showerror(MSG_ERROR, str(e))
 
