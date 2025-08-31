@@ -1,0 +1,439 @@
+﻿=== SNAPSHOT GestionStocks 20250901-005317 ===
+PWD: C:\Dev\GestionStocks
+Python: Python 3.13.7
+Exe: C:\Dev\GestionStocks\.venv\Scripts\python.exe
+Git: git version 2.51.0.windows.1
+
+=== GIT STATUS ===
+## main...origin/main
+ M app.py
+ M repo/database.py
+?? repo/article_repository.py
+?? repo/movement_repository.py
+?? snapshot-20250901-005133.txt
+?? snapshot-20250901-005317.txt
+
+=== TREE (filtré) ===
+
+Path                        
+----                        
+.gitattributes              
+.gitignore                  
+app.py                      
+hello.py                    
+README.md                   
+snapshot-20250901-005133.txt
+snapshot-20250901-005317.txt
+ui_strings.py               
+domain\model.py             
+domain\__init__.py          
+repo\article_repository.py  
+repo\database.py            
+repo\movement_repository.py 
+repo\__init__.py            
+utils\__init__.py           
+
+
+
+
+=== FILES CONTENT ===
+
+----- BEGIN FILE: domain\model.py -----
+from dataclasses import dataclass
+from datetime import datetime
+
+
+@dataclass(frozen=True)
+class Article:
+    id: int | None
+    name: str
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class Movement:
+    id: int | None
+    article_id: int
+    kind: str  # "IN" ou "OUT"
+    quantity: int
+    created_at: datetime
+
+
+----- END FILE -----
+
+----- BEGIN FILE: domain\__init__.py -----
+
+----- END FILE -----
+
+----- BEGIN FILE: repo\article_repository.py -----
+from typing import List, Optional
+from dataclasses import dataclass
+import sqlite3
+from .database import get_connection
+
+
+@dataclass(frozen=True)
+class ArticleRow:
+    id: int
+    name: str
+    description: str
+
+
+def create_article(name: str, description: str = "") -> int:
+    """CrÃ©e un article et retourne son id. LÃ¨ve ValueError si nom invalide ou doublon."""
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Le nom de l'article ne peut pas Ãªtre vide.")
+    try:
+        with get_connection() as conn:
+            cur = conn.execute(
+                "INSERT INTO articles(name, description) VALUES (?, ?);",
+                (name, (description or "").strip()),
+            )
+            return cur.lastrowid
+    except sqlite3.IntegrityError as e:
+        msg = str(e)
+        if "UNIQUE constraint failed: articles.name" in msg:
+            raise ValueError(f"Un article nommÃ© Â« {name} Â» existe dÃ©jÃ .") from e
+        raise
+
+
+def list_articles() -> List[ArticleRow]:
+    """Liste tous les articles, triÃ©s par nom."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, name, description FROM articles ORDER BY name;"
+        ).fetchall()
+        return [ArticleRow(id=r[0], name=r[1], description=r[2]) for r in rows]
+
+
+def get_article(article_id: int) -> Optional[ArticleRow]:
+    with get_connection() as conn:
+        r = conn.execute(
+            "SELECT id, name, description FROM articles WHERE id=?;", (article_id,)
+        ).fetchone()
+        return ArticleRow(id=r[0], name=r[1], description=r[2]) if r else None
+
+
+----- END FILE -----
+
+----- BEGIN FILE: repo\database.py -----
+import sqlite3
+from pathlib import Path
+
+DB_PATH = Path("stock.db")
+
+
+def get_connection() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    return conn
+
+
+def init_schema() -> None:
+    # CrÃ©e les tables si absentes + index + trigger "no negative stock"
+    with get_connection() as conn:
+        conn.executescript(
+            """
+        PRAGMA foreign_keys = ON;
+
+        CREATE TABLE IF NOT EXISTS articles(
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT DEFAULT ""
+        );
+
+        CREATE TABLE IF NOT EXISTS movements(
+            id INTEGER PRIMARY KEY,
+            article_id INTEGER NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('IN','OUT')),
+            quantity INTEGER NOT NULL CHECK(quantity > 0),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(article_id) REFERENCES articles(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_movements_article ON movements(article_id);
+
+        -- EmpÃªche une sortie (OUT) qui ferait passer le stock < 0
+        CREATE TRIGGER IF NOT EXISTS trg_no_negative_stock
+        BEFORE INSERT ON movements
+        WHEN NEW.kind='OUT'
+          AND (
+            COALESCE((
+              SELECT SUM(CASE WHEN kind='IN' THEN quantity ELSE -quantity END)
+              FROM movements WHERE article_id = NEW.article_id
+            ), 0) < NEW.quantity
+          )
+        BEGIN
+          SELECT RAISE(ABORT, 'Stock insuffisant');
+        END;
+        """
+        )
+
+
+----- END FILE -----
+
+----- BEGIN FILE: repo\movement_repository.py -----
+from typing import Optional, List, Tuple
+import sqlite3
+from .database import get_connection
+
+
+def get_stock(article_id: int) -> int:
+    """Stock courant = IN - OUT pour un article."""
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT
+              COALESCE(SUM(CASE WHEN kind='IN'  THEN quantity END),0) -
+              COALESCE(SUM(CASE WHEN kind='OUT' THEN quantity END),0)
+            FROM movements
+            WHERE article_id=?;
+        """,
+            (article_id,),
+        ).fetchone()
+        return int(row[0] or 0)
+
+
+def create_movement(article_id: int, kind: str, quantity: int) -> int:
+    """CrÃ©e un mouvement IN/OUT. LÃ¨ve sqlite3.IntegrityError si stock insuffisant."""
+    kind = kind.upper().strip()
+    if kind not in ("IN", "OUT"):
+        raise ValueError("kind doit Ãªtre 'IN' ou 'OUT'.")
+    if quantity <= 0:
+        raise ValueError("La quantitÃ© doit Ãªtre > 0.")
+
+    with get_connection() as conn:
+        try:
+            cur = conn.execute(
+                "INSERT INTO movements(article_id, kind, quantity) VALUES (?, ?, ?);",
+                (article_id, kind, quantity),
+            )
+            return cur.lastrowid
+        except sqlite3.IntegrityError as e:
+            # Repack message clair pour l'UI
+            msg = str(e)
+            if "Stock insuffisant" in msg:
+                raise ValueError("Stock insuffisant pour effectuer la sortie.") from e
+            if "FOREIGN KEY" in msg:
+                raise ValueError("Article inexistant.") from e
+            if "CHECK" in msg:
+                raise ValueError("DonnÃ©es invalides pour le mouvement.") from e
+            raise
+
+
+def list_movements(article_id: Optional[int] = None, limit: int = 100) -> List[Tuple]:
+    """Liste des mouvements (id, article_id, kind, quantity, created_at)."""
+    with get_connection() as conn:
+        if article_id is None:
+            rows = conn.execute(
+                """
+                SELECT id, article_id, kind, quantity, created_at
+                FROM movements ORDER BY datetime(created_at) DESC LIMIT ?;
+            """,
+                (limit,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, article_id, kind, quantity, created_at
+                FROM movements
+                WHERE article_id=? ORDER BY datetime(created_at) DESC LIMIT ?;
+            """,
+                (article_id, limit),
+            ).fetchall()
+        return rows
+
+
+----- END FILE -----
+
+----- BEGIN FILE: repo\__init__.py -----
+
+----- END FILE -----
+
+----- BEGIN FILE: utils\__init__.py -----
+
+----- END FILE -----
+
+----- BEGIN FILE: .gitattributes -----
+* text=auto
+
+
+
+----- END FILE -----
+
+----- BEGIN FILE: .gitignore -----
+# Environnements et artefacts
+.venv/
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+
+# DonnÃ©es locales
+stock.db
+exports/
+
+# Secrets Ã©ventuels
+.env
+
+
+----- END FILE -----
+
+----- BEGIN FILE: app.py -----
+import tkinter as tk
+from tkinter import ttk, simpledialog, messagebox
+from ui_strings import *
+from repo.database import init_schema
+from repo.article_repository import create_article, list_articles
+from repo.movement_repository import get_stock, create_movement
+
+
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title(APP_TITLE)
+        self.geometry("900x560")
+        self._build_menu()
+        self._build_articles_table()
+        self.refresh_articles()
+
+    # Menus
+    def _build_menu(self):
+        menubar = tk.Menu(self)
+
+        m_articles = tk.Menu(menubar, tearoff=0)
+        m_articles.add_command(
+            label="Ajouter un article", command=self.add_article_dialog
+        )
+        menubar.add_cascade(label="Articles", menu=m_articles)
+
+        m_moves = tk.Menu(menubar, tearoff=0)
+        m_moves.add_command(
+            label="EntrÃ©e (IN)", command=lambda: self.add_movement("IN")
+        )
+        m_moves.add_command(
+            label="Sortie (OUT)", command=lambda: self.add_movement("OUT")
+        )
+        menubar.add_cascade(label="Mouvements", menu=m_moves)
+
+        self.config(menu=menubar)
+
+    # Tableau
+    def _build_articles_table(self):
+        frame = ttk.Frame(self)
+        frame.pack(fill="both", expand=True, padx=12, pady=12)
+
+        columns = ("id", "name", "stock")
+        self.tree = ttk.Treeview(
+            frame, columns=columns, show="headings", selectmode="browse"
+        )
+        self.tree.heading("id", text="ID")
+        self.tree.heading("name", text="Name")
+        self.tree.heading("stock", text="Stock")
+        self.tree.column("id", width=80, anchor="center")
+        self.tree.column("name", width=520, anchor="w")
+        self.tree.column("stock", width=120, anchor="e")
+
+        vsb = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        self.status = tk.StringVar(value="PrÃªt.")
+        ttk.Label(self, textvariable=self.status, anchor="w").pack(
+            fill="x", padx=12, pady=(0, 8)
+        )
+
+    def refresh_articles(self):
+        for iid in self.tree.get_children():
+            self.tree.delete(iid)
+
+        items = list_articles()
+        for a in items:
+            stock = get_stock(a.id)
+            self.tree.insert("", "end", values=(a.id, a.name, stock))
+
+        self.status.set(f"{len(items)} article(s).")
+
+    # Dialogues
+    def add_article_dialog(self):
+        name = simpledialog.askstring(APP_TITLE, "Nom de l'article :")
+        if not name:
+            return
+        try:
+            create_article(name.strip())
+            self.status.set(f"Article crÃ©Ã©: {name.strip()}")
+            self.refresh_articles()
+        except Exception as e:
+            messagebox.showerror(MSG_ERROR, str(e))
+
+    def _selected_article_id(self) -> int | None:
+        sel = self.tree.selection()
+        if not sel:
+            return None
+        values = self.tree.item(sel[0], "values")
+        return int(values[0])
+
+    def add_movement(self, kind: str):
+        article_id = self._selected_article_id()
+        if not article_id:
+            messagebox.showinfo(
+                MSG_INFO, "SÃ©lectionne d'abord un article dans la liste."
+            )
+            return
+        qty = simpledialog.askinteger(APP_TITLE, f"QuantitÃ© pour {kind} :", minvalue=1)
+        if not qty:
+            return
+        try:
+            create_movement(article_id, kind, qty)
+            self.status.set(f"Mouvement {kind} de {qty} enregistrÃ©.")
+            self.refresh_articles()
+        except Exception as e:
+            messagebox.showerror(MSG_ERROR, str(e))
+
+
+if __name__ == "__main__":
+    init_schema()
+    App().mainloop()
+
+
+----- END FILE -----
+
+----- BEGIN FILE: hello.py -----
+# Test basique de l'environnement
+print("Env OK")
+
+# Test visuel Tkinter
+import tkinter as tk
+
+root = tk.Tk()
+root.title("Test Tkinter")
+tk.Label(root, text="Tkinter fonctionne.").pack(padx=12, pady=12)
+root.after(1200, root.destroy)  # ferme la fenÃªtre aprÃ¨s ~1,2s
+root.mainloop()
+
+
+----- END FILE -----
+
+----- BEGIN FILE: README.md -----
+# GestionStocks
+
+Base vierge: squelette GUI + SQLite.
+
+
+----- END FILE -----
+
+----- BEGIN FILE: ui_strings.py -----
+APP_TITLE = "Gestion de stocks (v1.0.0)"
+MSG_ERROR = "Erreur"
+MSG_INFO = "Information"
+
+
+----- END FILE -----
+
+=== END ===
