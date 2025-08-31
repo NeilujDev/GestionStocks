@@ -1,4 +1,4 @@
-﻿=== SNAPSHOT GestionStocks 20250901-005317 ===
+﻿=== SNAPSHOT GestionStocks 20250901-005523 ===
 PWD: C:\Dev\GestionStocks
 Python: Python 3.13.7
 Exe: C:\Dev\GestionStocks\.venv\Scripts\python.exe
@@ -6,12 +6,8 @@ Git: git version 2.51.0.windows.1
 
 === GIT STATUS ===
 ## main...origin/main
- M app.py
- M repo/database.py
-?? repo/article_repository.py
-?? repo/movement_repository.py
-?? snapshot-20250901-005133.txt
-?? snapshot-20250901-005317.txt
+ D snapshot-20250901-005317.txt
+?? snapshot-20250901-005523.txt
 
 === TREE (filtré) ===
 
@@ -22,8 +18,7 @@ Path
 app.py                      
 hello.py                    
 README.md                   
-snapshot-20250901-005133.txt
-snapshot-20250901-005317.txt
+snapshot-20250901-005523.txt
 ui_strings.py               
 domain\model.py             
 domain\__init__.py          
